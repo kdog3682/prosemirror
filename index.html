@@ -1,341 +1,375 @@
-.ProseMirror {
-  position: relative;
-}
-
-.ProseMirror {
-  word-wrap: break-word;
-  white-space: pre-wrap;
-  white-space: break-spaces;
-  -webkit-font-variant-ligatures: none;
-  font-variant-ligatures: none;
-  font-feature-settings: "liga" 0; /* the above doesn't seem to work in Edge */
-}
-
-.ProseMirror pre {
-  white-space: pre-wrap;
+/* utils */
+function getHTMLString(view) {
+    const state = view.state || view
+    const fragment = PM.model.DOMSerializer.fromSchema(
+        state.schema
+    ).serializeFragment(state.doc.content)
+    const div = document.createElement('div')
+    div.appendChild(fragment)
+    return div.innerHTML
 }
 
 
-.ProseMirror-hideselection *::selection { background: transparent; }
-.ProseMirror-hideselection *::-moz-selection { background: transparent; }
-.ProseMirror-hideselection { caret-color: transparent; }
-
-.ProseMirror-selectednode {
-  outline: 2px solid #8cf;
+function autoFocus(view, delay = 250) {
+    setTimeout(() => view.focus(), delay)
 }
 
-/* Make sure li selections wrap around markers */
 
-li.ProseMirror-selectednode {
-  outline: none;
+/* cmds  */
+// ------------------------------------------ 
+function evalState(state, dispatch) { /* cmd */
+    let s = ''
+    runner(state.doc.toJSON())
+    return s
+
+    function runner(a) {
+        if (isArray(a)) {
+            for (let item of a) {
+                runner(a)
+            }
+        }
+        else if (isObject(a)) {
+            console.log(JSON.stringify(a))
+            const {content, type, text} = a
+            if (content) {
+                runner(content)
+            }
+            else {
+                if (text) {
+                    s += text
+                }
+                if (type == 'paragraph') {
+                    s += '\n'
+                }
+            }
+        }
+    }
 }
 
-li.ProseMirror-selectednode:after {
-  content: "";
-  position: absolute;
-  left: -32px;
-  right: -2px; top: -2px; bottom: -2px;
-  border: 2px solid #8cf;
-  pointer-events: none;
+
+
+const customKeymap = {
+    //'Mod-j': evalState,
+    'Mod-g': boo,
+    'Mod-s': saveAsHtml,
 }
 
-/* Protect against generic img rules */
-
-img.ProseMirror-separator {
-  display: inline !important;
-  border: none !important;
-  margin: 0 !important;
-}
-.ProseMirror-textblock-dropdown {
-  min-width: 3em;
+function boo() {
+    console.log('hi from boo')
+    return true
 }
 
-.ProseMirror-menu {
-  margin: 0 -4px;
-  line-height: 1;
+function saveAsHtml(state) {
+    const html = getHTMLString(state)
+    download('pm.text.js', html)
+    return true
 }
 
-.ProseMirror-tooltip .ProseMirror-menu {
-  width: -webkit-fit-content;
-  width: fit-content;
-  white-space: pre;
+
+// ------------------------------------------ 
+const elementFromString = (value) => {
+  const element = document.createElement("span");
+  element.innerHTML = value.trim();
+
+  return element;
+};
+
+const insertHTML = ({ state, view }, value) => {
+  const { selection } = state;
+  const element = elementFromString(value);
+  const slice = DOMParser.fromSchema(state.schema).parseSlice(element);
+  const transaction = state.tr.insert(selection.anchor, slice.content);
+
+  view.dispatch(transaction);
+};
+
+
+
+function simpleSetup(schema, mapKeys) {
+    const plugins = [
+        history(),
+        dropCursor(),
+        gapCursor(),
+        buildInputRules(schema),
+        keymap(customKeymap),
+        keymap(buildKeymap(schema, mapKeys)),
+        keymap(baseKeymap),
+    ]
+    return plugins
+
+    return plugins.concat(
+        new Plugin({
+            props: {
+                attributes: {
+                    class: 'ProseMirror-example-setup-style',
+                },
+            },
+        })
+    )
 }
 
-.ProseMirror-menuitem {
-  margin-right: 3px;
-  display: inline-block;
+
+
+const { keymap } = PM.keymap
+const { history } = PM.history
+const { Plugin } = PM.state
+const { dropCursor } = PM.dropcursor
+const { gapCursor } = PM.gapcursor
+
+const { EditorState } = PM.state
+
+const {
+    wrapIn,
+    setBlockType,
+    chainCommands,
+    toggleMark,
+    exitCode,
+    joinUp,
+    joinDown,
+    lift,
+    selectParentNode,
+    baseKeymap,
+} = PM.commands
+const { 
+    wrapInList, splitListItem, liftListItem, sinkListItem
+} = PM.schema_list
+const { undo, redo } = PM.history
+
+const {
+    inputRules,
+    undoInputRule,
+    wrappingInputRule,
+    textblockTypeInputRule,
+    smartQuotes,
+    emDash,
+    ellipsis,
+    InputRule
+} = PM.inputrules
+
+//const aa = new InputRule(/\wx$/, 
+
+function imapInputRuleMaker(dict) {
+
+    function fn(state, match, start, end) {
+        let insert = dict[match[0]]
+        if (insert) {
+            return state.tr.insertText(insert, start, end)
+        }
+    }
+    const regex = RegExp('(?:' + Object.keys(dict).join('|') + ')$')
+    return new InputRule(regex, fn)
 }
 
-.ProseMirror-menuseparator {
-  border-right: 1px solid #ddd;
-  margin-right: 3px;
+imapdict = {
+    'abc': 'ABC'
+}
+function buildInputRules(schema) {
+    let rules = smartQuotes.concat(ellipsis, emDash)
+    merge(rules, imapInputRuleMaker(imapdict))
+    let type
+
+    if ((type = schema.nodes.blockquote))
+        rules.push(blockQuoteRule(type))
+    if ((type = schema.nodes.ordered_list))
+        rules.push(orderedListRule(type))
+    if ((type = schema.nodes.bullet_list))
+        rules.push(bulletListRule(type))
+    if ((type = schema.nodes.code_block))
+        rules.push(codeBlockRule(type))
+    if ((type = schema.nodes.heading))
+        console.log('hooooooooooooooooo')
+        rules.push(headingRule(type, 6))
+    return inputRules({ rules })
 }
 
-.ProseMirror-menu-dropdown, .ProseMirror-menu-dropdown-menu {
-  font-size: 90%;
-  white-space: nowrap;
+
+
+function blockQuoteRule(nodeType) {
+    return wrappingInputRule(/^\s*>\s$/, nodeType)
 }
 
-.ProseMirror-menu-dropdown {
-  vertical-align: 1px;
-  cursor: pointer;
-  position: relative;
-  padding-right: 15px;
+function orderedListRule(nodeType) {
+    return wrappingInputRule(
+        /^(\d+)\.\s$/,
+        nodeType,
+        (match) => ({ order: +match[1] }),
+        (match, node) =>
+            node.childCount + node.attrs.order == +match[1]
+    )
 }
 
-.ProseMirror-menu-dropdown-wrap {
-  padding: 1px 0 1px 4px;
-  display: inline-block;
-  position: relative;
+function bulletListRule(nodeType) {
+    return wrappingInputRule(/^\s*([-+*])\s$/, nodeType)
 }
 
-.ProseMirror-menu-dropdown:after {
-  content: "";
-  border-left: 4px solid transparent;
-  border-right: 4px solid transparent;
-  border-top: 4px solid currentColor;
-  opacity: .6;
-  position: absolute;
-  right: 4px;
-  top: calc(50% - 2px);
+function codeBlockRule(nodeType) {
+    return textblockTypeInputRule(/^```$/, nodeType)
 }
 
-.ProseMirror-menu-dropdown-menu, .ProseMirror-menu-submenu {
-  position: absolute;
-  background: white;
-  color: #666;
-  border: 1px solid #aaa;
-  padding: 2px;
+function headingRule(nodeType, maxLevel = 6) {
+    return textblockTypeInputRule(
+        new RegExp('^(#{1,' + maxLevel + '})\\s$'),
+        nodeType,
+        (match) => ({ level: match[1].length })
+    )
 }
 
-.ProseMirror-menu-dropdown-menu {
-  z-index: 15;
-  min-width: 6em;
+
+
+
+
+
+
+function buildKeymap(schema, mapKeys) {
+    let keys = {},
+        type
+    function bind(key, cmd) {
+        if (mapKeys) {
+            let mapped = mapKeys[key]
+            if (mapped === false) return
+            if (mapped) key = mapped
+        }
+        keys[key] = cmd
+    }
+
+    bind('Mod-z', undo)
+    bind('Shift-Mod-z', redo)
+    bind('Backspace', undoInputRule)
+
+    bind('Alt-ArrowUp', joinUp)
+    bind('Alt-ArrowDown', joinDown)
+    bind('Mod-BracketLeft', lift)
+    bind('Escape', selectParentNode)
+
+    if ((type = schema.marks.strong)) {
+        bind('Mod-b', toggleMark(type))
+        bind('Mod-B', toggleMark(type))
+    }
+    if ((type = schema.marks.em)) {
+        bind('Mod-i', toggleMark(type))
+        bind('Mod-I', toggleMark(type))
+    }
+    if ((type = schema.marks.code)) bind('Mod-`', toggleMark(type))
+
+    if ((type = schema.nodes.bullet_list))
+        console.log('hoooo bullet list')
+        bind('Shift-Ctrl-8', wrapInList(type))
+    if ((type = schema.nodes.ordered_list))
+        bind('Shift-Ctrl-9', wrapInList(type))
+    if ((type = schema.nodes.blockquote)) bind('Ctrl->', wrapIn(type))
+    if ((type = schema.nodes.hard_break)) {
+        let br = type,
+            cmd = chainCommands(exitCode, (state, dispatch) => {
+                dispatch(
+                    state.tr
+                        .replaceSelectionWith(br.create())
+                        .scrollIntoView()
+                )
+                return true
+            })
+        bind('Mod-Enter', cmd)
+        bind('Shift-Enter', cmd)
+    }
+    if ((type = schema.nodes.list_item)) {
+        bind('Enter', splitListItem(type))
+        bind('Mod-[', liftListItem(type))
+        bind('Mod-]', sinkListItem(type))
+    }
+    if ((type = schema.nodes.paragraph))
+        bind('Shift-Ctrl-0', setBlockType(type))
+    if ((type = schema.nodes.code_block))
+        bind('Shift-Ctrl-\\', setBlockType(type))
+    if ((type = schema.nodes.heading))
+        for (let i = 1; i <= 6; i++)
+            bind('Shift-Ctrl-' + i, setBlockType(type, { level: i }))
+    if ((type = schema.nodes.horizontal_rule)) {
+        console.log('hooooooooo horo')
+        let hr = type
+        bind('Mod-u', (state, dispatch) => {
+            console.log(state)
+            z = state
+            //returnMark: 04-02-2022 
+            //view.dispatch(z.tr.setSelection(
+            // this is a way to visualize what is happening
+            dispatch(
+                state.tr
+                    .replaceSelectionWith(hr.create())
+                    .scrollIntoView()
+                    //.setSelection()
+            )
+            return true
+        })
+    }
+
+    return keys
 }
 
-.ProseMirror-menu-dropdown-item {
-  cursor: pointer;
-  padding: 2px 8px 2px 4px;
+const {DOMParser} = PM.model
+
+function createState({doc, schema, plugins}) {
+    //const config = doc ?
+        //{ doc: DOMParser.fromSchema(schema).parse(stringToInvisibleNode(doc)), schema, plugins } :
+        //{ schema, plugins }
+
+        const config = { doc: DOMParser.fromSchema(schema).parse(doc || ''), schema, plugins }
+    return EditorState.create(config)
 }
 
-.ProseMirror-menu-dropdown-item:hover {
-  background: #f2f2f2;
+function stringToInvisibleNode(s) {
+    return createElement('div', {
+        style: {
+            display: 'none'
+        },
+        innerHTML: divify('p', '', s),
+    })
 }
 
-.ProseMirror-menu-submenu-wrap {
-  position: relative;
-  margin-right: -4px;
-}
 
-.ProseMirror-menu-submenu-label:after {
-  content: "";
-  border-top: 4px solid transparent;
-  border-bottom: 4px solid transparent;
-  border-left: 4px solid currentColor;
-  opacity: .6;
-  position: absolute;
-  right: 4px;
-  top: calc(50% - 4px);
-}
 
-.ProseMirror-menu-submenu {
-  display: none;
-  min-width: 4em;
-  left: 100%;
-  top: -3px;
-}
 
-.ProseMirror-menu-active {
-  background: #eee;
-  border-radius: 4px;
-}
 
-.ProseMirror-menu-disabled {
-  opacity: .3;
-}
 
-.ProseMirror-menu-submenu-wrap:hover .ProseMirror-menu-submenu, .ProseMirror-menu-submenu-wrap-active .ProseMirror-menu-submenu {
-  display: block;
-}
 
-.ProseMirror-menubar {
-  border-top-left-radius: inherit;
-  border-top-right-radius: inherit;
-  position: relative;
-  min-height: 1em;
-  color: #666;
-  padding: 1px 6px;
-  top: 0; left: 0; right: 0;
-  border-bottom: 1px solid silver;
-  background: white;
-  z-index: 10;
-  -moz-box-sizing: border-box;
-  box-sizing: border-box;
-  overflow: visible;
-}
 
-.ProseMirror-icon {
-  display: inline-block;
-  line-height: .8;
-  vertical-align: -2px; /* Compensate for padding */
-  padding: 2px 8px;
-  cursor: pointer;
-}
 
-.ProseMirror-menu-disabled.ProseMirror-icon {
-  cursor: default;
-}
 
-.ProseMirror-icon svg {
-  fill: currentColor;
-  height: 1em;
-}
 
-.ProseMirror-icon span {
-  vertical-align: text-top;
-}
-.ProseMirror-gapcursor {
-  display: none;
-  pointer-events: none;
-  position: absolute;
-}
 
-.ProseMirror-gapcursor:after {
-  content: "";
-  display: block;
-  position: absolute;
-  top: -2px;
-  width: 20px;
-  border-top: 1px solid black;
-  animation: ProseMirror-cursor-blink 1.1s steps(2, start) infinite;
-}
 
-@keyframes ProseMirror-cursor-blink {
-  to {
-    visibility: hidden;
-  }
-}
 
-.ProseMirror-focused .ProseMirror-gapcursor {
-  display: block;
-}
-/* Add space around the hr to make clicking it easier */
 
-.ProseMirror-example-setup-style hr {
-  padding: 2px 10px;
-  border: none;
-  margin: 1em 0;
-}
 
-.ProseMirror-example-setup-style hr:after {
-  content: "";
-  display: block;
-  height: 1px;
-  background-color: silver;
-  line-height: 2px;
-}
 
-.ProseMirror ul, .ProseMirror ol {
-  padding-left: 30px;
-}
 
-.ProseMirror blockquote {
-  padding-left: 1em;
-  border-left: 3px solid #eee;
-  margin-left: 0; margin-right: 0;
-}
+;(function (
+    EditorState,
+    EditorView,
+    prosemirrorModel,
+    prosemirrorSchemaBasic,
+    prosemirrorSchemaList
+) {
+    console.log(prosemirrorSchemaBasic.schema.spec.nodes)
+    schema = new prosemirrorModel.Schema({
+        nodes: prosemirrorSchemaList.addListNodes(
+            prosemirrorSchemaBasic.schema.spec.nodes,
+            'paragraph block*',
+            'block',
+            'heading',
+            'horizontal_rule',
+        ),
+        marks: prosemirrorSchemaBasic.schema.spec.marks,
+    })
 
-.ProseMirror-example-setup-style img {
-  cursor: default;
-}
-
-.ProseMirror-prompt {
-  background: white;
-  padding: 5px 10px 5px 15px;
-  border: 1px solid silver;
-  position: fixed;
-  border-radius: 3px;
-  z-index: 11;
-  box-shadow: -.5px 2px 5px rgba(0, 0, 0, .2);
-}
-
-.ProseMirror-prompt h5 {
-  margin: 0;
-  font-weight: normal;
-  font-size: 100%;
-  color: #444;
-}
-
-.ProseMirror-prompt input[type="text"],
-.ProseMirror-prompt textarea {
-  background: #eee;
-  border: none;
-  outline: none;
-}
-
-.ProseMirror-prompt input[type="text"] {
-  padding: 0 4px;
-}
-
-.ProseMirror-prompt-close {
-  position: absolute;
-  left: 2px; top: 1px;
-  color: #666;
-  border: none; background: transparent; padding: 0;
-}
-
-.ProseMirror-prompt-close:after {
-  content: "✕";
-  font-size: 12px;
-}
-
-.ProseMirror-invalid {
-  background: #ffc;
-  border: 1px solid #cc7;
-  border-radius: 4px;
-  padding: 5px 10px;
-  position: absolute;
-  min-width: 10em;
-}
-
-.ProseMirror-prompt-buttons {
-  margin-top: 5px;
-  display: none;
-}
-#editor, .editor {
-  background: white;
-  color: black;
-  background-clip: padding-box;
-  border-radius: 4px;
-  border: 2px solid rgba(0, 0, 0, 0.2);
-  padding: 5px 0;
-  margin-bottom: 23px;
-}
-
-.ProseMirror p:first-child,
-.ProseMirror h1:first-child,
-.ProseMirror h2:first-child,
-.ProseMirror h3:first-child,
-.ProseMirror h4:first-child,
-.ProseMirror h5:first-child,
-.ProseMirror h6:first-child {
-  margin-top: 10px;
-}
-
-.ProseMirror {
-  padding: 4px 8px 4px 14px;
-  line-height: 1.2;
-  outline: none;
-}
-
-.ProseMirror p { 
-    margin: 0;
-}
-
-.ProseMirror li {
-  position: relative;
-}
-
-------
-
-delete block('prompt')
+    plugins = simpleSetup(schema)
+    doc = 'hi there'
+    state = createState({ schema, plugins, doc })
+    selector = document.querySelector('.app-editor')
+    view = new EditorView(selector, {state})
+    autoFocus(view)
+})(
+    PM.state.EditorState,
+    PM.view.EditorView,
+    PM.model,
+    PM.schema_basic,
+    PM.schema_list
+)
